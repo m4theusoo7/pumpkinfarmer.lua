@@ -242,4 +242,4 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[Pumpkin Farm V9] Pronto para farmar abóboras no chão! Equipa a arma e aperta E.")
+print("[Pumpkin Farm V9] Pronto para farmar abóboras no chão! Equipa a arma e aperta T.")
