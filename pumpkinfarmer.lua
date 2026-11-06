@@ -1,4 +1,4 @@
--- PUMPKIN FARMER V6 - COORDENADO E RÁPIDO
+-- PUMPKIN FARMER V7 - JACK O' LANTERN CORRIGIDO
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -6,22 +6,39 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
 local Farming = false
-local ISLAND_RADIUS = 1500 -- 1500 studs = mesma ilha
-local FLY_SPEED = 450 -- velocidade do voo entre ilhas
-local WALK_SPEED = 150 -- velocidade dentro da ilha
+local ISLAND_RADIUS = 1500
 
-local KEYWORDS = {"pumpkin", "abobora", "pumpk"}
 local hitRemote = ReplicatedStorage:WaitForChild("Remotes"):FindFirstChild("Hit")
 
 local function getHRP() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
 local function getHum() return player.Character and player.Character:FindFirstChild("Humanoid") end
-local function isPumpkin(o) local n=string.lower(o.Name) for _,k in ipairs(KEYWORDS) do if string.find(n,k) then return true end end return false end
-local function getRoot(m) if m:IsA("BasePart") then return m end return m:FindFirstChild("HumanoidRootPart", true) or m:FindFirstChildOfClass("BasePart", true) end
+
+local function getRoot(m)
+    if not m then return nil end
+    if m:IsA("BasePart") then return m end
+    return m:FindFirstChild("HumanoidRootPart", true) or m:FindFirstChildOfClass("BasePart", true)
+end
+
+local function isJackLantern(obj)
+    local n = string.lower(obj.Name)
+    return string.find(n, "jack") or string.find(n, "lantern") or string.find(n, "pumpkin")
+end
 
 local function findPumpkins()
     local list = {}
-    for _, o in ipairs(workspace:GetDescendants()) do
-        if isPumpkin(o) then table.insert(list,o) end
+    -- 1. Procura em Enemies.Jack o' Lantern (o do console)
+    local enemies = workspace:FindFirstChild("Enemies")
+    if enemies then
+        for _, model in ipairs(enemies:GetChildren()) do
+            if isJackLantern(model) then table.insert(list, model) end
+        end
+    end
+    -- 2. e em PumpkinHunt
+    local hunt = workspace:FindFirstChild("PumpkinHunt")
+    if hunt then
+        for _, obj in ipairs(hunt:GetDescendants()) do
+            if isJackLantern(obj) then table.insert(list, obj) end
+        end
     end
     return list
 end
@@ -37,70 +54,8 @@ local function equipWeapon()
     return nil
 end
 
--- VOO SUAVE - sem piscar entre ilhas
-local function flyTo(targetPos, speed)
-    speed = speed or FLY_SPEED
-    local hrp = getHRP()
-    if not hrp then return end
-    pcall(function() hrp:SetNetworkOwner(player) end)
-    while Farming and hrp and hrp.Parent do
-        local cur = hrp.Position
-        local dist = (targetPos - cur).Magnitude
-        if dist < 3 then break end
-        local dt = RunService.Heartbeat:Wait()
-        local step = math.min(dist, speed * dt)
-        local newPos = cur + (targetPos - cur).Unit * step
-        -- mantém 3 studs acima do chão e olhando para frente
-        hrp.CFrame = CFrame.lookAt(newPos + Vector3.new(0, 3, 0), targetPos)
-        hrp.Velocity = Vector3.zero
-    end
-end
-
--- ATACA ATÉ QUEBRAR (rápido)
-local function attackUntilBreak(pumpkin)
-    local start = os.clock()
-    while Farming and pumpkin and pumpkin.Parent do
-        local humAlvo = pumpkin:FindFirstChildOfClass("Humanoid", true)
-        if humAlvo and humAlvo.Health <= 0 then break end
-        if os.clock() - start > 8 then break end -- timeout de segurança
-
-        local hrp = getHRP()
-        local root = getRoot(pumpkin)
-        if not hrp or not root then break end
-
-        local pos = root.Position
-        -- fica do lado a 4 studs, olhando pra ela
-        local dir = (hrp.Position - pos)
-        if dir.Magnitude < 0.1 then dir = Vector3.new(0,0,1) end
-        local sidePos = pos + dir.Unit * 4 + Vector3.new(0, 3, 0)
-
-        -- se estiver longe, voa até perto, se já estiver perto, só reposiciona
-        if (hrp.Position - sidePos).Magnitude > 8 then
-            flyTo(sidePos, 350)
-        else
-            hrp.CFrame = CFrame.lookAt(sidePos, pos)
-            hrp.Velocity = Vector3.zero
-        end
-        task.wait(0.02)
-
-        -- SPAM DE DANO - 3 métodos ao mesmo tempo para quebrar rápido
-        local tool = equipWeapon()
-        if tool then pcall(function() tool:Activate() end) end
-        if hitRemote then pcall(function() hitRemote:FireServer(pos) end) end
-
-        -- se for part sem Humanoid, toca nele
-        if not humAlvo then
-            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 2, 0))
-        end
-
-        task.wait(0.05)
-    end
-end
-
--- PEGA SÓ AS DA ILHA ATUAL (coordenado)
-local function pickCurrentIsland(all)
+local function getNearestIsland(all)
     local hrp = getHRP() if not hrp then return {} end
-    -- 1. tenta pegar as que já estão perto do jogador (ilha atual)
     local current = {}
     for _,p in ipairs(all) do
         local r = getRoot(p)
@@ -112,7 +67,6 @@ local function pickCurrentIsland(all)
         table.sort(current, function(a,b) return (getRoot(a).Position-hrp.Position).Magnitude < (getRoot(b).Position-hrp.Position).Magnitude end)
         return current
     end
-    -- 2. se nenhuma perto, pega a abóbora mais próxima e o cluster dela = próxima ilha
     local nearest, nd = nil, 999999
     for _,p in ipairs(all) do
         local r = getRoot(p)
@@ -129,25 +83,73 @@ local function pickCurrentIsland(all)
     return island
 end
 
+-- TELEPORTA E DEPOIS ATACA ATÉ QUEBRAR
+local function attackUntilBreak(pumpkin)
+    local hrp = getHRP()
+    local root = getRoot(pumpkin)
+    if not hrp or not root then return end
+    if not pumpkin.Parent then return end
+
+    local humAlvo = pumpkin:FindFirstChildOfClass("Humanoid", true)
+    if not humAlvo then
+        -- se não tem humanoid, tenta achar o root como alvo
+        humAlvo = nil
+    end
+
+    -- 1. TELEPORTA ATÉ A ABÓBORA
+    -- fica 4 studs do lado, olhando pra ela
+    local pos = root.Position
+    hrp.CFrame = CFrame.lookAt(pos + Vector3.new(0, 3, 4), pos)
+    hrp.Velocity = Vector3.zero
+    task.wait(0.05)
+
+    -- 2. COMEÇA O ATAQUE ATÉ QUEBRAR
+    local tool = equipWeapon()
+    if not tool then warn("EQUIPA TUA ESPADA ANTES!") return end
+
+    local start = os.clock()
+    while Farming and pumpkin and pumpkin.Parent do
+        if humAlvo and humAlvo.Health <= 0 then break end
+        if os.clock() - start > 8 then break end
+
+        local hrp2 = getHRP()
+        local root2 = getRoot(pumpkin)
+        if not hrp2 or not root2 then break end
+
+        -- reposiciona a cada golpe para não errar
+        local p = root2.Position
+        hrp2.CFrame = CFrame.lookAt(p + Vector3.new(0, 3, 4), p)
+        hrp2.Velocity = Vector3.zero
+
+        -- dano
+        pcall(function() tool:Activate() end)
+        if hitRemote then pcall(function() hitRemote:FireServer(p) end) end
+
+        task.wait(0.06)
+    end
+    if pumpkin and pumpkin.Parent then
+        print("Jack o' Lantern resistiu, tentando próximo...")
+    else
+        print("Jack o' Lantern quebrado!")
+    end
+end
+
 local function mainLoop()
     while Farming do
         local all = findPumpkins()
         local btn = getgenv().PumpBtn
         if #all == 0 then
-            if btn then btn.Text = "FARMER: ON (0)" end
+            if btn then btn.Text = "FARMER: ON (0 Jack)" end
             task.wait(1)
         else
-            local island = pickCurrentIsland(all)
-            if btn then btn.Text = string.format("ILHA: %d/%d", #island, #all) end
-            print(string.format("Farme coordenado: %d abóboras nesta ilha", #island))
-
-            -- TERMINA TODAS DA ILHA ATUAL PRIMEIRO
+            local island = getNearestIsland(all)
+            if btn then btn.Text = string.format("ILHA: %d/%d Jack", #island, #all) end
+            print("Farme na ilha atual:", #island, "Jack o' Lantern")
             for _, p in ipairs(island) do
                 if not Farming then break end
                 pcall(attackUntilBreak, p)
-                task.wait(0.05)
+                task.wait(0.1)
             end
-            -- terminou a ilha -> loop volta e pega automaticamente a próxima mais perto
         end
         task.wait(0.3)
     end
@@ -178,4 +180,4 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[V6] Liga com E - com espada no 1!")
+print("[V7] Jack o' Lantern - Liga com E, com espada no 1!")
