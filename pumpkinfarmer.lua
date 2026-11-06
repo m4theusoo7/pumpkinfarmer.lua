@@ -1,7 +1,7 @@
 --//====================================================\\
 --|| Blox Fruits Sea 1 - Halloween Pumpkin Auto Farm      ||--
 --|| Executor: Synapse / KRNL / Fluxus compatible        ||--
---|| FIX: agora ATACA a pumpkin (M1 + Tool:Activate)     ||--
+--|| FIX v3: Hits travado em 0 / nao atacava             ||--
 --\\====================================================//
 
 
@@ -15,17 +15,18 @@ local Config = {
         "HalloweenPumpkin",
     },
 
-    UseNameFallback = true, -- also accepts names containing "pumpkin"
+    UseNameFallback = true,
+    Debug = true, -- prints pumpkin info in console (F9). Turn off after it works
 
-    TweenSpeed = 150, -- studs per second
+    TweenSpeed = 150,
     CollectDelay = 0.3,
     ToggleKey = Enum.KeyCode.Insert,
 
     -- ATTACK
-    AttackDelay = 0.08, -- delay between clicks. 0.05 ~ 0.1 is good
-    AttackTimeout = 8, -- max seconds attacking the same pumpkin
-    AttackDistance = 3, -- studs away from the pumpkin while attacking
-    UseCommFAttack = false, -- Blox Fruits remote attack (experimental, keep false if kick/error)
+    AttackDelay = 0.1,
+    AttackTimeout = 8,
+    AttackDistance = 3,
+    UseCommFAttack = true, -- FIX: Blox Fruits FastAttack remote ON by default
 
     AntiAFK = true,
 }
@@ -52,6 +53,7 @@ local Collected = 0
 local TotalDistance = 0
 local Attacks = 0
 local CurrentTween = nil
+local DebugPrinted = {}
 
 --====================================================\\
 --|| HELPERS                                             ||--
@@ -153,110 +155,20 @@ local function setNoclip(enabled)
     end
 end
 
---====================================================\\
---|| WEAPON / ATTACK                                     ||--
---====================================================\\
-local function getEquippedTool()
-    local humanoid = getHumanoid()
-    if humanoid and humanoid.EquippedTool then
-        return humanoid.EquippedTool
+local function debugPumpkin(pumpkin)
+    if not Config.Debug or DebugPrinted[pumpkin] then return end
+    DebugPrinted[pumpkin] = true
+    local cdCount, promptCount, partCount = 0, 0, 0
+    for _, obj in ipairs(pumpkin:GetDescendants()) do
+        if obj:IsA("ClickDetector") then cdCount += 1 end
+        if obj:IsA("ProximityPrompt") then promptCount += 1 end
+        if obj:IsA("BasePart") then partCount += 1 end
     end
-    local character = LocalPlayer.Character
-    if not character then return nil end
-    for _, item in ipairs(character:GetChildren()) do
-        if item:IsA("Tool") then return item end
-    end
-    return nil
+    print(string.format("[PumpkinFarm] %s | Class=%s Humanoid=%s Parts=%d ClickDetectors=%d Prompts=%d",
+        pumpkin:GetFullName(), pumpkin.ClassName, tostring(getPumpkinHumanoid(pumpkin)), partCount, cdCount, promptCount))
 end
 
-local function equipWeapon()
-    local humanoid = getHumanoid()
-    if not humanoid then return nil end
-    local equipped = getEquippedTool()
-    if equipped then return equipped end
-
-    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                humanoid:EquipTool(item)
-                task.wait(0.1)
-                return item
-            end
-        end
-    end
-    return nil
-end
-
-local function sendMouseClick()
-    -- Synapse / KRNL / Fluxus executor function
-    if type(mouse1click) == "function" then
-        pcall(mouse1click)
-    end
-
-    -- Roblox VirtualInputManager (modern)
-    pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-        task.wait()
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-    end)
-end
-
-local function tryCommFAttack(pumpkin)
-    if not Config.UseCommFAttack then return end
-    local hrp = getHRP()
-    if not hrp then return end
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-    local commf = remotes and remotes:FindFirstChild("CommF_")
-    if not commf then return end
-
-    local cf = hrp.CFrame
-    local hitbox = {
-        cf.X, cf.Y, cf.Z,
-        cf.LookVector.X, cf.LookVector.Y, cf.LookVector.Z,
-        cf.RightVector.X, cf.RightVector.Y, cf.RightVector.Z,
-    }
-    pcall(function()
-        commf:InvokeServer("Attack", pumpkin, hitbox)
-    end)
-end
-
-local function tryExecutorTouch(pumpkin)
-    local hrp = getHRP()
-    local part = getTargetPart(pumpkin)
-    if not hrp or not part then return end
-
-    -- ClickDetector (pumpkin may be collected by clicking)
-    if type(fireclickdetector) == "function" then
-        for _, obj in ipairs(pumpkin:GetDescendants()) do
-            if obj:IsA("ClickDetector") then
-                pcall(fireclickdetector, obj)
-            end
-        end
-        if pumpkin:IsA("BasePart") then
-            local cd = pumpkin:FindFirstChildOfClass("ClickDetector")
-            if cd then pcall(fireclickdetector, cd) end
-        end
-    end
-
-    -- ProximityPrompt
-    if type(fireproximityprompt) == "function" then
-        for _, obj in ipairs(pumpkin:GetDescendants()) do
-            if obj:IsA("ProximityPrompt") then
-                pcall(fireproximityprompt, obj, 10, 0)
-            end
-        end
-    end
-
-    -- Touch (teleporting HRP onto the part)
-    if type(firetouchinterest) == "function" then
-        pcall(firetouchinterest, hrp, part, 0)
-        task.wait(0.05)
-        pcall(firetouchinterest, hrp, part, 1)
-    end
-end
-
--- GUI forward declare (defined later, used by updateStats)
+-- GUI forward declare
 local statusLabel, collectedLabel, distanceLabel, hitsLabel
 
 local function updateStats(statusText)
@@ -268,44 +180,160 @@ local function updateStats(statusText)
     end
 end
 
+--====================================================\\
+--|| WEAPON / ATTACK                                     ||--
+--====================================================\\
+local function getEquippedTool()
+    local humanoid = getHumanoid()
+    if humanoid and humanoid.EquippedTool then return humanoid.EquippedTool end
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    for _, item in ipairs(character:GetChildren()) do
+        if item:IsA("Tool") then return item end
+    end
+    return nil
+end
+
+-- FIX: EquipTool can yield forever. Never call it directly in the attack loop.
+local function equipWeaponAsync()
+    task.spawn(function()
+        local humanoid = getHumanoid()
+        if not humanoid then return end
+        if humanoid.EquippedTool then return end
+        local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if not backpack then return end
+        for _, item in ipairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                pcall(function() humanoid:EquipTool(item) end)
+                break
+            end
+        end
+    end)
+end
+
+-- FIX: click in the CENTER of the screen (where you aim), not in 0,0.
+-- FIX: mouse1click removed - it hangs on KRNL/Fluxus and was blocking Hits.
+local function sendMouseClickCenter()
+    local camera = Workspace.CurrentCamera
+    local center = camera and camera.ViewportSize * 0.5 or Vector2.new(960, 540)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
+        task.wait()
+        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
+    end)
+end
+
+local function cframeToHitbox(cf)
+    return {
+        cf.X, cf.Y, cf.Z,
+        cf.LookVector.X, cf.LookVector.Y, cf.LookVector.Z,
+        cf.RightVector.X, cf.RightVector.Y, cf.RightVector.Z,
+        cf.UpVector.X, cf.UpVector.Y, cf.UpVector.Z,
+    }
+end
+
+-- FIX: Blox Fruits FastAttack = CommF_ remote. This is the main damage method.
+local function tryCommFAttack(pumpkin)
+    if not Config.UseCommFAttack then return end
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local commf = remotes and remotes:FindFirstChild("CommF_")
+    if not commf then return end
+
+    local mobCF = getPumpkinCFrame(pumpkin)
+    if not mobCF then return end
+
+    pcall(function()
+        commf:InvokeServer("Attack", pumpkin, cframeToHitbox(mobCF))
+    end)
+end
+
+-- FIX: executor touch/click/prompt helpers run in their own thread,
+-- so a slow fireproximityprompt can never block the attack loop again.
+local function tryExecutorTouch(pumpkin)
+    task.spawn(function()
+        local hrp = getHRP()
+        local part = getTargetPart(pumpkin)
+        if not hrp or not part or not pumpkin.Parent then return end
+
+        if type(fireclickdetector) == "function" then
+            for _, obj in ipairs(pumpkin:GetDescendants()) do
+                if obj:IsA("ClickDetector") then pcall(fireclickdetector, obj) end
+            end
+        end
+
+        if type(fireproximityprompt) == "function" then
+            for _, obj in ipairs(pumpkin:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") then pcall(fireproximityprompt, obj, 10, 0) end
+            end
+        end
+
+        if type(firetouchinterest) == "function" then
+            pcall(firetouchinterest, hrp, part, 0)
+            task.wait(0.05)
+            pcall(firetouchinterest, hrp, part, 1)
+        end
+    end)
+end
+
 local function attackPumpkin(pumpkin)
     if not pumpkin or not pumpkin.Parent then return false end
 
-    local tool = equipWeapon()
-    local humanoid = getPumpkinHumanoid(pumpkin)
-    local hasHumanoid = humanoid ~= nil
-
-    -- If it has ClickDetector / Prompt, try that first (fast collect)
+    debugPumpkin(pumpkin)
+    equipWeaponAsync()
     tryExecutorTouch(pumpkin)
     task.wait(0.2)
     if not pumpkin.Parent then return true end
 
-    local maxTime = hasHumanoid and Config.AttackTimeout or 1.5
+    local hasHumanoid = getPumpkinHumanoid(pumpkin) ~= nil
+    local maxTime = hasHumanoid and Config.AttackTimeout or 2
     local startTime = os.clock()
+    local hitCount = 0
 
     while Farming and pumpkin.Parent and (os.clock() - startTime) < maxTime do
         local targetCFrame = getPumpkinCFrame(pumpkin)
         local hrp = getHRP()
         if not targetCFrame or not hrp then break end
 
-        local targetPos = targetCFrame.Position
-        local attackPos = targetPos + Vector3.new(0, 0, Config.AttackDistance)
+        -- FIX: count the hit FIRST, so Hits can never stay at 0 while attacking
+        Attacks += 1
+        hitCount += 1
+        updateStats("Status: Attacking pumpkin...")
 
-        -- Stay close and face the pumpkin (required for M1 hit in Blox Fruits)
+        local targetPos = targetCFrame.Position
+
+        -- FIX: stay on the SAME side you approached from (not always +Z through walls)
+        local dir = hrp.Position - targetPos
+        dir = Vector3.new(dir.X, 0, dir.Z)
+        if dir.Magnitude < 0.5 then
+            local camera = Workspace.CurrentCamera
+            local look = camera and camera.CFrame.LookVector or Vector3.new(0, 0, 1)
+            dir = Vector3.new(look.X, 0, look.Z)
+            if dir.Magnitude < 0.5 then dir = Vector3.new(0, 0, 1) end
+        end
+        local attackPos = targetPos + dir.Unit * Config.AttackDistance
+
         hrp.Anchored = true
         setNoclip(true)
         hrp.CFrame = CFrame.lookAt(attackPos, targetPos)
 
-        -- ATTACK: M1 click + weapon activate
-        sendMouseClick()
-        tool = getEquippedTool() or tool
-        if tool then
-            pcall(function() tool:Activate() end)
-        end
+        -- 1. Blox Fruits remote damage (main method)
         tryCommFAttack(pumpkin)
 
-        Attacks += 1
-        updateStats("Status: Attacking pumpkin...")
+        -- 2. M1 click at screen center (in a thread, cannot block the loop)
+        task.spawn(sendMouseClickCenter)
+
+        -- 3. Weapon activate occasionally (in a thread too)
+        if hitCount % 3 == 0 then
+            task.spawn(function()
+                local tool = getEquippedTool()
+                if tool then pcall(function() tool:Activate() end) end
+            end)
+        end
+
+        -- 4. Re-try prompt / click / touch every ~1s for collectable pumpkins
+        if hitCount % 10 == 0 then
+            tryExecutorTouch(pumpkin)
+        end
 
         task.wait(Config.AttackDelay)
 
@@ -318,22 +346,19 @@ local function attackPumpkin(pumpkin)
     if hrp then hrp.Anchored = false end
     setNoclip(false)
 
-    -- Final fallback: touch / click detector / prompt
     if Farming and pumpkin.Parent then
         tryExecutorTouch(pumpkin)
         task.wait(0.2)
     end
 
     if not pumpkin.Parent then return true end
-
     local pumpkinHumanoid = getPumpkinHumanoid(pumpkin)
     if pumpkinHumanoid and pumpkinHumanoid.Health <= 0 then return true end
-
     return false
 end
 
 --====================================================\\
---|| TWEEN                                               ||--
+--|| TWEEN (with timeout, Completed:Wait can hang)       ||--
 --====================================================\\
 local function tweenTo(targetCFrame)
     local hrp = getHRP()
@@ -350,15 +375,25 @@ local function tweenTo(targetCFrame)
 
     local tweenTime = math.max(distance / Config.TweenSpeed, 0.1)
     local tweenInfo = TweenInfo.new(tweenTime, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCFrame })
+    CurrentTween = tween
 
-    CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCFrame })
+    local finished = false
+    tween.Completed:Connect(function() finished = true end)
 
     local wasAnchored = hrp.Anchored
     hrp.Anchored = true
     setNoclip(true)
 
-    CurrentTween:Play()
-    CurrentTween.Completed:Wait()
+    tween:Play()
+
+    local start = os.clock()
+    while not finished and Farming and (os.clock() - start) < tweenTime + 1.5 do
+        task.wait()
+    end
+    if not finished then
+        pcall(function() tween:Cancel() end)
+    end
 
     CurrentTween = nil
     setNoclip(false)
@@ -371,11 +406,9 @@ local function farmOnePumpkin(pumpkin)
     local pumpkinCFrame = getPumpkinCFrame(pumpkin)
     if not pumpkinCFrame then return false end
 
-    -- 1. Tween to above the pumpkin
     local ok = tweenTo(pumpkinCFrame + Vector3.new(0, 4, 0))
     if not ok or not Farming or not pumpkin.Parent then return false end
 
-    -- 2. Attack it (this is the fix: before it only teleported)
     updateStats("Status: Attacking pumpkin...")
     local killed = attackPumpkin(pumpkin)
 
@@ -603,4 +636,4 @@ end)
 
 createGui()
 updateStats("Status: Idle - press START FARM")
-print("[PumpkinFarm] Loaded. Press Insert to toggle GUI.")
+print("[PumpkinFarm] Loaded. Press Insert to toggle GUI. Check F9 console for pumpkin debug info.")
