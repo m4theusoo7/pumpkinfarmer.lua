@@ -1,125 +1,208 @@
--- JACK O' LANTERN V11 - DETECTA F/E COM POLLING
+-- PUMPKIN FARM / JACK O' LANTERN / V9 PROFISSIONAL (TOGGLE & ISLAND HOP)
+-- Autora: Crouton Alpha
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UIS = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local Hit = ReplicatedStorage:WaitForChild("Remotes"):FindFirstChild("Hit")
 
-local ToggleKeys = {Enum.KeyCode.F, Enum.KeyCode.E}
-local IslandRadius = 1500
+local Config = {
+    IslandRadius = 400,   -- Raio para detetar abóboras na mesma ilha
+    HitDistance = 5,      -- Distância para colar na abóbora e bater
+    FlySpeed = 450,       -- Velocidade do deslocamento
+    AttackDelay = 0.1,    -- Delay entre cada ataque
+    MaxAttackTime = 8,    -- Tempo máximo por abóbora antes de saltar para a próxima
+    ToggleKey = Enum.KeyCode.F, -- Tecla para Ligar/Desligar (Podes usar F sem conflitar com o E do jogo)
+}
+
 local Farming = false
-local lastToggle = 0
 
-local function hrp() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
-local function hum() return player.Character and player.Character:FindFirstChildOfClass("Humanoid") end
+local function getHRP()
+    local char = player.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHumanoid()
+    local char = player.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
 
 local function getTool()
+    local hum = getHumanoid()
     local char = player.Character
-    local h = hum()
-    if not char or not h then return nil end
-    local t = char:FindFirstChildOfClass("Tool")
-    if t then return t end
-    local bp = player.Backpack and player.Backpack:FindFirstChildOfClass("Tool")
-    if bp then bp.Parent = char h:EquipTool(bp) end
-    return bp
+    if not hum or not char then return nil end
+    local tool = char:FindFirstChildOfClass("Tool")
+    if tool then return tool end
+    local bpTool = player.Backpack:FindFirstChildOfClass("Tool")
+    if bpTool then
+        bpTool.Parent = char
+        hum:EquipTool(bpTool)
+    end
+    return bpTool
 end
 
-local function scan()
-    local list = {}
-    local e = workspace:FindFirstChild("Enemies")
-    if not e then return list end
-    for _, m in ipairs(e:GetChildren()) do
-        if m:IsA("Model") and m.Name == "Jack o' Lantern" then
-            local h = m:FindFirstChildOfClass("Humanoid")
-            local r = m:FindFirstChild("HumanoidRootPart")
-            if h and h.Health > 0 and r then table.insert(list, {M=m, H=h, R=r}) end
+-- 1. SCAN - Procura todas as abóboras espalhadas pelo mapa inteiro
+local function findPumpkinTargets()
+    local targets = {}
+    
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj.Name == "Jack o' Lantern" or obj.Name:lower():find("jack o' lantern") then
+            local rootPart = nil
+            local humanoid = nil
+            
+            if obj:IsA("Model") then
+                rootPart = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("PrimaryPart") or obj:FindFirstChildWhichIsA("BasePart")
+                humanoid = obj:FindFirstChildOfClass("Humanoid")
+            elseif obj:IsA("BasePart") then
+                rootPart = obj
+            end
+            
+            if rootPart then
+                local alive = true
+                if humanoid and humanoid.Health <= 0 then alive = false end
+                
+                if alive then
+                    local exists = false
+                    for _, t in ipairs(targets) do
+                        if t.Root == rootPart or t.Object == obj then exists = true break end
+                    end
+                    if not exists then
+                        table.insert(targets, { Object = obj, Root = rootPart, Humanoid = humanoid })
+                    end
+                end
+            end
         end
     end
-    return list
+
+    return targets
 end
 
-local function flyTo(pos)
-    local h = hrp() if not h then return end
-    if (h.Position - pos).Magnitude < 5 then return end
-    local cf = CFrame.lookAt(pos + Vector3.new(0,3,0), pos)
-    local tw = TweenService:Create(h, TweenInfo.new(math.max((h.Position-pos).Magnitude/500, 0.1), Enum.EasingStyle.Linear), {CFrame = cf})
-    h.Anchored = true tw:Play() tw.Completed:Wait() h.Anchored = false
+-- 2. MOVE - Tween seguro até a abóbora
+local function moveTo(targetPos: Vector3)
+    local hrp = getHRP()
+    if not hrp then return end
+
+    local distance = (targetPos - hrp.Position).Magnitude
+    if distance < Config.HitDistance then return end
+
+    local targetCF = CFrame.lookAt(targetPos + Vector3.new(0, 3, 0), targetPos)
+    local time = math.max(distance / Config.FlySpeed, 0.1)
+    local tween = TweenService:Create(hrp, TweenInfo.new(time, Enum.EasingStyle.Linear), { CFrame = targetCF })
+
+    hrp.Anchored = true
+    tween:Play()
+    tween.Completed:Wait()
+    hrp.Anchored = false
 end
 
-local function kill(t)
-    local tool = getTool() if not tool then return end
-    local h = hrp() if not h then return end
-    flyTo(t.R.Position) task.wait(0.05)
+-- 3. ATTACK - Ataca a abóbora atual até ela quebrar / desaparecer
+local function attack(target)
+    local obj = target.Object
+    local root = target.Root
+    local hum = target.Humanoid
+
+    local tool = getTool()
+    local hrp = getHRP()
+    if not hrp then return end
+
+    moveTo(root.Position)
+    task.wait(0.05)
+
     local start = os.clock()
-    while Farming and t.M.Parent and t.H.Health > 0 do
-        if os.clock() - start > 10 then break end
-        local r = t.M:FindFirstChild("HumanoidRootPart") if not r then break end
-        h.CFrame = CFrame.lookAt(r.Position + Vector3.new(0,3,0), r.Position)
-        h.Velocity = Vector3.zero
-        tool:Activate()
-        if Hit then pcall(function() Hit:FireServer(r.Position) end) end
-        task.wait(0.08)
+    while Farming and obj and obj.Parent and root and root.Parent do
+        if hum and hum.Health <= 0 then break end
+        if (os.clock() - start) > Config.MaxAttackTime then break end
+
+        hrp.CFrame = CFrame.lookAt(root.Position + Vector3.new(0, 3, 0), root.Position)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+
+        if tool then
+            tool:Activate()
+        end
+
+        task.wait(Config.AttackDelay)
     end
 end
 
-local function island(all)
-    local h = hrp() if not h then return {} end
-    local cur = {}
-    for _, t in ipairs(all) do if (t.R.Position - h.Position).Magnitude < IslandRadius then table.insert(cur, t) end end
-    if #cur > 0 then table.sort(cur, function(a,b) return (a.R.Position-h.Position).Magnitude < (b.R.Position-h.Position).Magnitude end) return cur end
-    table.sort(all, function(a,b) return (a.R.Position-h.Position).Magnitude < (b.R.Position-h.Position).Magnitude end)
-    if #all == 0 then return {} end
-    local c = all[1].R.Position
-    local out = {}
-    for _, t in ipairs(all) do if (t.R.Position-c).Magnitude < IslandRadius then table.insert(out, t) end end
-    return out
+-- 4. ORGANIZAR ILHAS: Fica na ilha atual até limpar tudo, depois vai para a ilha mais próxima com abóboras
+local function getIslandTargets(targets)
+    local hrp = getHRP()
+    if not hrp then return {} end
+
+    -- Pega tudo o que está na ilha atual do jogador
+    local island = {}
+    for _, t in ipairs(targets) do
+        if (t.Root.Position - hrp.Position).Magnitude < Config.IslandRadius then
+            table.insert(island, t)
+        end
+    end
+
+    -- Se limpou tudo na ilha atual, pega o centro da próxima ilha mais próxima que ainda tem abóboras
+    if #island == 0 and #targets > 0 then
+        table.sort(targets, function(a, b)
+            return (a.Root.Position - hrp.Position).Magnitude < (b.Root.Position - hrp.Position).Magnitude
+        end)
+        
+        local center = targets[1].Root.Position
+        for _, t in ipairs(targets) do
+            if (t.Root.Position - center).Magnitude < Config.IslandRadius then
+                table.insert(island, t)
+            end
+        end
+    end
+
+    -- Ordena da mais próxima para a mais distante dentro da ilha atual
+    table.sort(island, function(a, b)
+        return (a.Root.Position - hrp.Position).Magnitude < (b.Root.Position - hrp.Position).Magnitude
+    end)
+
+    return island
 end
 
+-- 5. LOOP PRINCIPAL DE FARM
 local function main()
     while Farming do
-        local all = scan()
-        if #all == 0 then task.wait(0.5)
-        else for _, t in ipairs(island(all)) do if not Farming then break end kill(t) task.wait(0.05) end task.wait(0.2) end
+        local all = findPumpkinTargets()
+        if #all == 0 then
+            task.wait(0.5) -- Se não houver abóboras no mapa, aguarda reaparecerem
+        else
+            local island = getIslandTargets(all)
+            for _, target in ipairs(island) do
+                if not Farming then break end
+                if target.Object and target.Object.Parent then
+                    attack(target)
+                end
+            end
+            task.wait(0.2)
+        end
     end
 end
 
--- Polling por frame = sempre funciona, mesmo com o jogo focado
-task.spawn(function()
-    while true do
-        task.wait()
-        if os.clock() - lastToggle < 0.3 then continue end
-        for _, k in ipairs(ToggleKeys) do
-            if UIS:IsKeyDown(k) then
-                lastToggle = os.clock()
-                Farming = not Farming
-                print("[Jack Farm V11] Tecla apertada, Farming:", Farming)
-                if Farming then task.spawn(main) end
-                break
+-- Controlo de Ativação por Tecla (Tecla F)
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Config.ToggleKey then
+        Farming = not Farming
+        print("[Pumpkin Farm V9] Estado do Farming:", Farming)
+        if Farming then
+            task.spawn(main)
+        end
+    end
+end)
+
+-- Evita colisões e empurrões enquanto está a voar/farmar
+RunService.Stepped:Connect(function()
+    if Farming then
+        local hrp = getHRP()
+        if hrp then
+            hrp.CanCollide = false
+            for _, p in ipairs(player.Character:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
             end
         end
     end
 end)
 
--- Fallback InputBegan também
-UIS.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    for _, k in ipairs(ToggleKeys) do
-        if input.KeyCode == k then
-            Farming = not Farming
-            print("[Jack Farm V11] InputBegan, Farming:", Farming)
-            if Farming then task.spawn(main) end
-            break
-        end
-    end
-end)
-
-RunService.Stepped:Connect(function()
-    if not Farming then return end
-    local h = hrp()
-    if h then h.CanCollide = false for _, p in ipairs(player.Character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end
-end)
-
-print("[Jack Farm V11] Carregado! Aperta F ou E para iniciar.")
+print("[Pumpkin Farm V9] Carregado com sucesso! Equipa a tua arma e aperta a tecla **F** para ligar/desligar.")
