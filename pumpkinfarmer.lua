@@ -1,35 +1,37 @@
--- PUMPKIN FARMER - BLOX FRUITS
+-- PUMPKIN FARMER V2 - CORRIGIDO
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
 
--- CONFIG
-local DELAY = 0.05 -- tempo entre cada abóbora
-local DISTANCE = 5 -- distancia que ele fica da abóbora
-local KEY_TOGGLE = Enum.KeyCode.E -- aperta E para ligar/desligar
-
 local Farming = false
-local Tweening = false
+local DISTANCE = 6
+local DELAY = 0.05
 
--- FUNÇÃO PARA ACHAR AS ABÓBORAS
-local function findPumpkins()
-    local list = {}
-    -- Procura em Enemies (caso esteja spawando como NPC/Enemy de Halloween)
-    if workspace:FindFirstChild("Enemies") then
-        for _, enemy in pairs(workspace.Enemies:GetDescendants()) do
-            if string.find(string.lower(enemy.Name), "pumpkin") or string.find(string.lower(enemy.Name), "abobora") then
-                if enemy:FindFirstChild("Humanoid") and enemy:FindFirstChild("HumanoidRootPart") then
-                    table.insert(list, enemy)
-                end
-            end
+-- Lista de palavras que vão detectar a abobora
+local KEYWORDS = {"pumpkin", "abobora", "pumpk", "halloween"}
+
+local function isPumpkin(obj)
+    local n = string.lower(obj.Name)
+    for _, k in pairs(KEYWORDS) do
+        if string.find(n, k) then
+            return true
         end
     end
-    -- Procura também na workspace normal (caso seja objeto quebrável)
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if (string.find(string.lower(obj.Name), "pumpkin") or string.find(string.lower(obj.Name), "abobora")) and obj:IsA("Model") then
-            if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Part") then
-                table.insert(list, obj)
+    return false
+end
+
+local function findPumpkins()
+    local list = {}
+    -- Procura em lugares de streaming
+    local folders = {workspace, workspace:FindFirstChild("Enemies"), workspace:FindFirstChild("Map"), workspace:FindFirstChild("NPCs")}
+    for _, folder in pairs(folders) do
+        if folder then
+            for _, obj in pairs(folder:GetDescendants()) do
+                if isPumpkin(obj) then
+                    table.insert(list, obj)
+                end
             end
         end
     end
@@ -37,108 +39,88 @@ local function findPumpkins()
 end
 
 local function getRoot(model)
-    return model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Part") or model:FindFirstChildOfClass("Part")
-end
-
-local function getHumanoid(model)
-    return model:FindFirstChildOfClass("Humanoid")
-end
-
--- TELEPORTE
-local function teleportTo(pos)
-    local char = player.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = CFrame.new(pos + Vector3.new(0, DISTANCE, 0))
-        -- travar no ar
-        hrp.Velocity = Vector3.new()
+    if model:IsA("BasePart") or model:IsA("MeshPart") then
+        return model
     end
+    return model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChildOfClass("BasePart", true)
 end
 
--- ATACAR / QUEBRAR
-local function killPumpkin(model)
-    local hrp = getRoot(model)
-    local hum = getHumanoid(model)
-    if not hrp then return end
-
-    teleportTo(hrp.Position)
+local function kill(target)
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local root = getRoot(target)
+    if not hrp or not root then return end
+    
+    hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, DISTANCE, 0))
+    hrp.Velocity = Vector3.zero
     task.wait(0.05)
-
-    -- 1. Simular clique (funciona com espada/pistola equipada)
-    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+    
+    -- Clique
+    VirtualInputManager:SendMouseButtonEvent(0,0,0,true,game,1)
     task.wait(DELAY)
-    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+    VirtualInputManager:SendMouseButtonEvent(0,0,0,false,game,1)
 
-    -- 2. Dano direto (para abóbora quebrável ou enemy com pouca vida)
+    -- Se for NPC com Humanoid, dá dano direto
+    local hum = target:FindFirstChildOfClass("Humanoid", true)
     if hum and hum.Health > 0 then
         hum:TakeDamage(9999)
     end
+    
+    -- Se for Part quebrável, também toca (CanTouch)
+    root.CanTouch = true
 end
 
--- LOOP PRINCIPAL ILHA POR ILHA
-local function startFarmer()
-    while Farming do
-        local pumpkins = findPumpkins()
-        if #pumpkins == 0 then
-            print("Nenhuma abóbora encontrada, esperando...")
-            task.wait(1)
-        else
-            for _, pumpkin in ipairs(pumpkins) do
-                if not Farming then break end
-                if pumpkin and pumpkin.Parent then
-                    pcall(killPumpkin, pumpkin)
-                end
-                task.wait(DELAY)
-            end
-        end
-        task.wait(0.5)
-    end
-end
+-- UI
+local gui = Instance.new("ScreenGui")
+gui.Name = "PumpkinV2"
+gui.ResetOnSpawn = false
+local ok, hu = pcall(function() return gethui() end)
+gui.Parent = ok and hu or player:WaitForChild("PlayerGui")
 
--- UI BOTÃO
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "PumpkinFarmer"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = CoreGui
-
-local Button = Instance.new("TextButton")
-Button.Size = UDim2.new(0, 150, 0, 50)
-Button.Position = UDim2.new(0.5, -75, 0, 50)
-Button.Text = "FARMER: OFF"
-Button.BackgroundColor3 = Color3.fromRGB(255, 128, 0)
-Button.TextColor3 = Color3.new(1,1,1)
-Button.Font = Enum.Font.SourceSansBold
-Button.Parent = ScreenGui
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(0, 200, 0, 60)
+btn.Position = UDim2.new(0.5, -100, 0, 60)
+btn.Text = "FARMER: OFF (0 aboboras)"
+btn.BackgroundColor3 = Color3.fromRGB(255, 128, 0)
+btn.TextColor3 = Color3.new(1,1,1)
+btn.TextScaled = true
+btn.Parent = gui
 
 local function toggle()
     Farming = not Farming
-    Button.Text = Farming and "FARMER: ON" or "FARMER: OFF"
-    Button.BackgroundColor3 = Farming and Color3.fromRGB(0,255,0) or Color3.fromRGB(255,128,0)
-    print("Pumpkin Farmer:", Farming)
-    if Farming then
-        task.spawn(startFarmer)
-    end
+    btn.BackgroundColor3 = Farming and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 128, 0)
+    print("[Pumpkin V2] Ligado:", Farming)
+    task.spawn(function()
+        while Farming do
+            local list = findPumpkins()
+            btn.Text = string.format("FARMER: %s (%d)", Farming and "ON" or "OFF", #list)
+            if #list == 0 then
+                warn("Nenhuma abobora encontrada. Esperando...")
+                task.wait(1)
+            else
+                for _, p in pairs(list) do
+                    if not Farming then break end
+                    pcall(kill, p)
+                    task.wait(DELAY)
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
 end
 
-Button.MouseButton1Click:Connect(toggle)
-
--- TECLA E
-game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
-    if not gpe and input.KeyCode == KEY_TOGGLE then
-        toggle()
-    end
+btn.MouseButton1Click:Connect(toggle)
+UIS.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == Enum.KeyCode.E then toggle() end
 end)
 
--- NOCLIP
+-- NoClip
 RunService.Stepped:Connect(function()
     if Farming and player.Character then
-        for _, v in pairs(player.Character:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            end
+        for _, p in pairs(player.Character:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = false end
         end
     end
 end)
 
-print("[Pumpkin Farmer] Carregado! Aperta E para ativar")
+print("[Pumpkin V2] Carregado - Aperta E")
