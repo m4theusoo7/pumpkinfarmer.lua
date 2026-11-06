@@ -1,4 +1,4 @@
--- PUMPKIN FARMER V7 - JACK O' LANTERN CORRIGIDO
+-- PUMPKIN FARMER V8 - JACK O' LANTERN DEFINITIVO
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -13,31 +13,24 @@ local hitRemote = ReplicatedStorage:WaitForChild("Remotes"):FindFirstChild("Hit"
 local function getHRP() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
 local function getHum() return player.Character and player.Character:FindFirstChild("Humanoid") end
 
-local function getRoot(m)
-    if not m then return nil end
-    if m:IsA("BasePart") then return m end
-    return m:FindFirstChild("HumanoidRootPart", true) or m:FindFirstChildOfClass("BasePart", true)
-end
-
-local function isJackLantern(obj)
-    local n = string.lower(obj.Name)
-    return string.find(n, "jack") or string.find(n, "lantern") or string.find(n, "pumpkin")
+-- Só pega o HumanoidRootPart de verdade, nunca um BasePart aleatório
+local function getRoot(model)
+    return model:FindFirstChild("HumanoidRootPart", true)
 end
 
 local function findPumpkins()
     local list = {}
-    -- 1. Procura em Enemies.Jack o' Lantern (o do console)
     local enemies = workspace:FindFirstChild("Enemies")
-    if enemies then
-        for _, model in ipairs(enemies:GetChildren()) do
-            if isJackLantern(model) then table.insert(list, model) end
-        end
-    end
-    -- 2. e em PumpkinHunt
-    local hunt = workspace:FindFirstChild("PumpkinHunt")
-    if hunt then
-        for _, obj in ipairs(hunt:GetDescendants()) do
-            if isJackLantern(obj) then table.insert(list, obj) end
+    if not enemies then return list end
+
+    for _, model in ipairs(enemies:GetChildren()) do
+        if model:IsA("Model") and string.lower(model.Name) == "jack o' lantern" then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            local root = getRoot(model)
+            -- só conta se ele está vivo e tem posição válida
+            if hum and hum.Health > 0 and root then
+                table.insert(list, model)
+            end
         end
     end
     return list
@@ -52,6 +45,67 @@ local function equipWeapon()
     local bp = player.Backpack and player.Backpack:FindFirstChildOfClass("Tool")
     if bp then bp.Parent = char hum:EquipTool(bp) return bp end
     return nil
+end
+
+-- VOO ANCORADO - nunca cai pra debaixo do mapa
+local function flyTo(targetPos, speed)
+    local hrp = getHRP()
+    if not hrp then return end
+    hrp.Anchored = true
+    pcall(function() hrp:SetNetworkOwner(player) end)
+
+    while Farming and hrp.Parent do
+        local cur = hrp.Position
+        local dist = (targetPos - cur).Magnitude
+        if dist < 5 then break end
+        local dt = RunService.Heartbeat:Wait()
+        local step = math.min(dist, (speed or 400) * dt)
+        local newPos = cur + (targetPos - cur).Unit * step
+        -- mantém sempre 15 studs acima para não entrar no terreno
+        hrp.CFrame = CFrame.lookAt(newPos + Vector3.new(0, 8, 0), targetPos)
+    end
+    hrp.Anchored = false
+end
+
+-- ATACA ATÉ QUEBRAR
+local function attackUntilBreak(pumpkin)
+    local hrp = getHRP()
+    local root = getRoot(pumpkin)
+    if not hrp or not root then return end
+    if not pumpkin.Parent then return end
+
+    local humAlvo = pumpkin:FindFirstChildOfClass("Humanoid")
+    if not humAlvo or humAlvo.Health <= 0 then return end
+
+    -- 1. Voa até a abóbora (ancorado, sem cair)
+    flyTo(root.Position, 400)
+    task.wait(0.05)
+
+    -- 2. Começa o ataque até quebrar
+    local tool = equipWeapon()
+    if not tool then warn("EQUIPA SUA ARMA!") return end
+
+    local start = os.clock()
+    while Farming and pumpkin and pumpkin.Parent do
+        if humAlvo.Health <= 0 then break end
+        if os.clock() - start > 8 then break end
+
+        local hrp2 = getHRP()
+        local root2 = getRoot(pumpkin)
+        if not hrp2 or not root2 then break end
+
+        -- fica colado e olhando
+        local p = root2.Position
+        hrp2.Anchored = true
+        hrp2.CFrame = CFrame.lookAt(p + Vector3.new(0, 4, 0), p)
+
+        pcall(function() tool:Activate() end)
+        if hitRemote then pcall(function() hitRemote:FireServer(p) end) end
+
+        task.wait(0.08)
+    end
+    local hrp2 = getHRP()
+    if hrp2 then hrp2.Anchored = false end
 end
 
 local function getNearestIsland(all)
@@ -83,75 +137,25 @@ local function getNearestIsland(all)
     return island
 end
 
--- TELEPORTA E DEPOIS ATACA ATÉ QUEBRAR
-local function attackUntilBreak(pumpkin)
-    local hrp = getHRP()
-    local root = getRoot(pumpkin)
-    if not hrp or not root then return end
-    if not pumpkin.Parent then return end
-
-    local humAlvo = pumpkin:FindFirstChildOfClass("Humanoid", true)
-    if not humAlvo then
-        -- se não tem humanoid, tenta achar o root como alvo
-        humAlvo = nil
-    end
-
-    -- 1. TELEPORTA ATÉ A ABÓBORA
-    -- fica 4 studs do lado, olhando pra ela
-    local pos = root.Position
-    hrp.CFrame = CFrame.lookAt(pos + Vector3.new(0, 3, 4), pos)
-    hrp.Velocity = Vector3.zero
-    task.wait(0.05)
-
-    -- 2. COMEÇA O ATAQUE ATÉ QUEBRAR
-    local tool = equipWeapon()
-    if not tool then warn("EQUIPA TUA ESPADA ANTES!") return end
-
-    local start = os.clock()
-    while Farming and pumpkin and pumpkin.Parent do
-        if humAlvo and humAlvo.Health <= 0 then break end
-        if os.clock() - start > 8 then break end
-
-        local hrp2 = getHRP()
-        local root2 = getRoot(pumpkin)
-        if not hrp2 or not root2 then break end
-
-        -- reposiciona a cada golpe para não errar
-        local p = root2.Position
-        hrp2.CFrame = CFrame.lookAt(p + Vector3.new(0, 3, 4), p)
-        hrp2.Velocity = Vector3.zero
-
-        -- dano
-        pcall(function() tool:Activate() end)
-        if hitRemote then pcall(function() hitRemote:FireServer(p) end) end
-
-        task.wait(0.06)
-    end
-    if pumpkin and pumpkin.Parent then
-        print("Jack o' Lantern resistiu, tentando próximo...")
-    else
-        print("Jack o' Lantern quebrado!")
-    end
-end
-
 local function mainLoop()
     while Farming do
         local all = findPumpkins()
         local btn = getgenv().PumpBtn
         if #all == 0 then
-            if btn then btn.Text = "FARMER: ON (0 Jack)" end
-            task.wait(1)
+            if btn then btn.Text = string.format("FARMER: ON (0) - TOTAL 0") end
+            print("Nenhum Jack o' Lantern vivo na Enemies")
+            task.wait(2)
         else
             local island = getNearestIsland(all)
             if btn then btn.Text = string.format("ILHA: %d/%d Jack", #island, #all) end
-            print("Farme na ilha atual:", #island, "Jack o' Lantern")
+            print("Ilha atual:", #island)
             for _, p in ipairs(island) do
                 if not Farming then break end
                 pcall(attackUntilBreak, p)
                 task.wait(0.1)
             end
         end
-        task.wait(0.3)
+        task.wait(0.4)
     end
 end
 
@@ -175,9 +179,8 @@ RunService.Stepped:Connect(function()
         if hrp then
             for _,p in ipairs(player.Character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
             hrp.CanCollide = false
-            hrp.Velocity = Vector3.zero
         end
     end
 end)
 
-print("[V7] Jack o' Lantern - Liga com E, com espada no 1!")
+print("[V8] Jack o' Lantern - Liga com E, com arma no 1!")
