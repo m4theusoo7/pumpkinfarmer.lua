@@ -1,4 +1,4 @@
--- PUMPKIN FARM / JACK O' LANTERN / V9 PROFISSIONAL
+-- PUMPKIN FARM / JACK O' LANTERN / V9 PROFISSIONAL (BLOFRUITS FIX)
 -- Autora: Crouton Alpha
 
 local Players = game:GetService("Players")
@@ -8,8 +8,6 @@ local TweenService = game:GetService("TweenService")
 local UIS = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local Remotes = ReplicatedStorage:WaitForChild("Remotes")
-local Hit = Remotes:WaitForChild("Hit")
 
 local Config = {
     IslandRadius = 1500,
@@ -104,13 +102,12 @@ local function attack(target)
         local root = model:FindFirstChild("HumanoidRootPart")
         if not root then break end
 
-        -- fica colado e olhando
+        -- Fica colado e a olhar para o alvo
         hrp.CFrame = CFrame.lookAt(root.Position + Vector3.new(0, 3, 0), root.Position)
         hrp.AssemblyLinearVelocity = Vector3.zero
 
-        -- Spam M1
+        -- Ativa a ferramenta (M1 / Ataque padrão do Blox Fruits)
         tool:Activate()
-        Hit:FireServer(root.Position)
 
         task.wait(Config.AttackDelay)
     end
@@ -189,4 +186,4 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[Pumpkin Farm V9] Carregado! Aperte E com a arma equipada.")
+print("[Pumpkin Farm V9] Carregado com sucesso! Equipa a tua arma/espada e aperta a tecla E para iniciar.")
