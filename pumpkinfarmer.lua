@@ -1,11 +1,9 @@
--- PUMPKIN FARM / JACK O' LANTERN / V9 PROFISSIONAL (FIX TECLA E)
+-- PUMPKIN FARM / JACK O' LANTERN / V9 PROFISSIONAL (AUTO-START FIX)
 -- Autora: Crouton Alpha
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local UIS = game:GetService("UserInputService")
-
 local player = Players.LocalPlayer
 
 local Config = {
@@ -14,10 +12,10 @@ local Config = {
     FlySpeed = 450,
     AttackDelay = 0.1,
     MaxAttackTime = 8,
-    ToggleKey = Enum.KeyCode.F, -- Mudado para F para não dar conflito com o E do jogo!
 }
 
-local Farming = false
+-- Inicia automaticamente ligado para evitar problemas com teclas no executor
+local Farming = true
 
 local function getHRP()
     local char = player.Character
@@ -172,15 +170,6 @@ local function main()
     end
 end
 
-UIS.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Config.ToggleKey then
-        Farming = not Farming
-        print("[Pumpkin Farm V9] Farming:", Farming)
-        if Farming then task.spawn(main) end
-    end
-end)
-
 RunService.Stepped:Connect(function()
     if Farming then
         local hrp = getHRP()
@@ -193,4 +182,6 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[Pumpkin Farm V9] Carregado! Equipa a arma e aperta a tecla **F** para iniciar.")
+-- Inicia o ciclo imediatamente ao executar
+print("[Pumpkin Farm V9] Iniciado automaticamente! A farmar abóboras...")
+task.spawn(main)
