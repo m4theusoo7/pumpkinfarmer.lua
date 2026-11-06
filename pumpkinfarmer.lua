@@ -99,14 +99,14 @@ local function attack(target)
 
     local start = os.clock()
     while Farming and model.Parent and hum.Health > 0 do
-        if os.clock() - start > Config.MaxAttackTime then break end
+        if (os.clock() - start) > Config.MaxAttackTime then break end
 
         local root = model:FindFirstChild("HumanoidRootPart")
         if not root then break end
 
         -- fica colado e olhando
         hrp.CFrame = CFrame.lookAt(root.Position + Vector3.new(0, 3, 0), root.Position)
-        hrp.Velocity = Vector3.zero
+        hrp.AssemblyLinearVelocity = Vector3.zero
 
         -- Spam M1
         tool:Activate()
@@ -189,4 +189,4 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[Pumpkin Farm V9] Corrido! Aperte E com a arma equipada.")
+print("[Pumpkin Farm V9] Carregado! Aperte E com a arma equipada.")
