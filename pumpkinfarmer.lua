@@ -1,186 +1,192 @@
--- PUMPKIN FARMER V8 - JACK O' LANTERN DEFINITIVO
+-- PUMPKIN FARM / JACK O' LANTERN / V9 PROFISSIONAL
+-- Autora: Crouton Alpha
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local UIS = game:GetService("UserInputService")
+
 local player = Players.LocalPlayer
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local Hit = Remotes:WaitForChild("Hit")
+
+local Config = {
+    IslandRadius = 1500,
+    HitDistance = 6,
+    FlySpeed = 450,
+    AttackDelay = 0.12,
+    MaxAttackTime = 10,
+    ToggleKey = Enum.KeyCode.E,
+}
 
 local Farming = false
-local ISLAND_RADIUS = 1500
 
-local hitRemote = ReplicatedStorage:WaitForChild("Remotes"):FindFirstChild("Hit")
-
-local function getHRP() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
-local function getHum() return player.Character and player.Character:FindFirstChild("Humanoid") end
-
--- Só pega o HumanoidRootPart de verdade, nunca um BasePart aleatório
-local function getRoot(model)
-    return model:FindFirstChild("HumanoidRootPart", true)
+local function getHRP()
+    local char = player.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
-local function findPumpkins()
-    local list = {}
-    local enemies = workspace:FindFirstChild("Enemies")
-    if not enemies then return list end
-
-    for _, model in ipairs(enemies:GetChildren()) do
-        if model:IsA("Model") and string.lower(model.Name) == "jack o' lantern" then
-            local hum = model:FindFirstChildOfClass("Humanoid")
-            local root = getRoot(model)
-            -- só conta se ele está vivo e tem posição válida
-            if hum and hum.Health > 0 and root then
-                table.insert(list, model)
-            end
-        end
-    end
-    return list
+local function getHumanoid()
+    local char = player.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
 end
 
-local function equipWeapon()
-    local hum = getHum()
+local function getTool()
+    local hum = getHumanoid()
     local char = player.Character
     if not hum or not char then return nil end
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then return tool end
-    local bp = player.Backpack and player.Backpack:FindFirstChildOfClass("Tool")
-    if bp then bp.Parent = char hum:EquipTool(bp) return bp end
-    return nil
+    local bpTool = player.Backpack:FindFirstChildOfClass("Tool")
+    if bpTool then
+        bpTool.Parent = char
+        hum:EquipTool(bpTool)
+    end
+    return bpTool
 end
 
--- VOO ANCORADO - nunca cai pra debaixo do mapa
-local function flyTo(targetPos, speed)
+-- 1. SCAN - só vivos, só Enemies, só Jack o' Lantern
+local function findTargets()
+    local targets = {}
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return targets end
+
+    for _, model in ipairs(enemies:GetChildren()) do
+        if model:IsA("Model") and model.Name == "Jack o' Lantern" then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            local root = model:FindFirstChild("HumanoidRootPart")
+            if hum and hum.Health > 0 and root then
+                table.insert(targets, { Model = model, Humanoid = hum, Root = root })
+            end
+        end
+    end
+    return targets
+end
+
+-- 2. MOVE - tween ancorado, sem cair debaixo do mapa
+local function moveTo(targetPos: Vector3)
     local hrp = getHRP()
     if not hrp then return end
-    hrp.Anchored = true
-    pcall(function() hrp:SetNetworkOwner(player) end)
 
-    while Farming and hrp.Parent do
-        local cur = hrp.Position
-        local dist = (targetPos - cur).Magnitude
-        if dist < 5 then break end
-        local dt = RunService.Heartbeat:Wait()
-        local step = math.min(dist, (speed or 400) * dt)
-        local newPos = cur + (targetPos - cur).Unit * step
-        -- mantém sempre 15 studs acima para não entrar no terreno
-        hrp.CFrame = CFrame.lookAt(newPos + Vector3.new(0, 8, 0), targetPos)
-    end
+    local distance = (targetPos - hrp.Position).Magnitude
+    if distance < Config.HitDistance then return end
+
+    local targetCF = CFrame.lookAt(targetPos + Vector3.new(0, 3, 0), targetPos)
+    local time = math.max(distance / Config.FlySpeed, 0.1)
+    local tween = TweenService:Create(hrp, TweenInfo.new(time, Enum.EasingStyle.Linear), { CFrame = targetCF })
+
+    hrp.Anchored = true
+    tween:Play()
+    tween.Completed:Wait()
     hrp.Anchored = false
 end
 
--- ATACA ATÉ QUEBRAR
-local function attackUntilBreak(pumpkin)
+-- 3. ATTACK - até quebrar, sem desistir
+local function attack(target)
+    local model = target.Model
+    local hum = target.Humanoid
+
+    local tool = getTool()
+    if not tool then return end
+
     local hrp = getHRP()
-    local root = getRoot(pumpkin)
-    if not hrp or not root then return end
-    if not pumpkin.Parent then return end
+    if not hrp then return end
 
-    local humAlvo = pumpkin:FindFirstChildOfClass("Humanoid")
-    if not humAlvo or humAlvo.Health <= 0 then return end
-
-    -- 1. Voa até a abóbora (ancorado, sem cair)
-    flyTo(root.Position, 400)
+    -- Teleporta primeiro, depois ataca
+    moveTo(target.Root.Position)
     task.wait(0.05)
 
-    -- 2. Começa o ataque até quebrar
-    local tool = equipWeapon()
-    if not tool then warn("EQUIPA SUA ARMA!") return end
-
     local start = os.clock()
-    while Farming and pumpkin and pumpkin.Parent do
-        if humAlvo.Health <= 0 then break end
-        if os.clock() - start > 8 then break end
+    while Farming and model.Parent and hum.Health > 0 do
+        if os.clock() - start > Config.MaxAttackTime then break end
 
-        local hrp2 = getHRP()
-        local root2 = getRoot(pumpkin)
-        if not hrp2 or not root2 then break end
+        local root = model:FindFirstChild("HumanoidRootPart")
+        if not root then break end
 
         -- fica colado e olhando
-        local p = root2.Position
-        hrp2.Anchored = true
-        hrp2.CFrame = CFrame.lookAt(p + Vector3.new(0, 4, 0), p)
+        hrp.CFrame = CFrame.lookAt(root.Position + Vector3.new(0, 3, 0), root.Position)
+        hrp.Velocity = Vector3.zero
 
-        pcall(function() tool:Activate() end)
-        if hitRemote then pcall(function() hitRemote:FireServer(p) end) end
+        -- Spam M1
+        tool:Activate()
+        Hit:FireServer(root.Position)
 
-        task.wait(0.08)
+        task.wait(Config.AttackDelay)
     end
-    local hrp2 = getHRP()
-    if hrp2 then hrp2.Anchored = false end
 end
 
-local function getNearestIsland(all)
-    local hrp = getHRP() if not hrp then return {} end
-    local current = {}
-    for _,p in ipairs(all) do
-        local r = getRoot(p)
-        if r and (r.Position - hrp.Position).Magnitude < ISLAND_RADIUS then
-            table.insert(current, p)
+-- 4. LOOP COORDENADO
+local function getIslandTargets(targets)
+    local hrp = getHRP()
+    if not hrp then return {} end
+
+    -- Ilha atual = tudo dentro do radius do jogador
+    local island = {}
+    for _, t in ipairs(targets) do
+        if (t.Root.Position - hrp.Position).Magnitude < Config.IslandRadius then
+            table.insert(island, t)
         end
     end
-    if #current > 0 then
-        table.sort(current, function(a,b) return (getRoot(a).Position-hrp.Position).Magnitude < (getRoot(b).Position-hrp.Position).Magnitude end)
-        return current
+
+    -- Se nada perto, pega a ilha mais próxima
+    if #island == 0 and #targets > 0 then
+        table.sort(targets, function(a, b)
+            return (a.Root.Position - hrp.Position).Magnitude < (b.Root.Position - hrp.Position).Magnitude
+        end)
+        local center = targets[1].Root.Position
+        for _, t in ipairs(targets) do
+            if (t.Root.Position - center).Magnitude < Config.IslandRadius then
+                table.insert(island, t)
+            end
+        end
     end
-    local nearest, nd = nil, 999999
-    for _,p in ipairs(all) do
-        local r = getRoot(p)
-        if r then local d=(r.Position-hrp.Position).Magnitude if d<nd then nd=d nearest=p end end
-    end
-    if not nearest then return {} end
-    local center = getRoot(nearest).Position
-    local island = {}
-    for _,p in ipairs(all) do
-        local r = getRoot(p)
-        if r and (r.Position - center).Magnitude < ISLAND_RADIUS then table.insert(island,p) end
-    end
-    table.sort(island, function(a,b) return (getRoot(a).Position-hrp.Position).Magnitude < (getRoot(b).Position-hrp.Position).Magnitude end)
+
+    -- Mais perto primeiro na ilha
+    table.sort(island, function(a, b)
+        return (a.Root.Position - hrp.Position).Magnitude < (b.Root.Position - hrp.Position).Magnitude
+    end)
+
     return island
 end
 
-local function mainLoop()
+local function main()
     while Farming do
-        local all = findPumpkins()
-        local btn = getgenv().PumpBtn
+        local all = findTargets()
         if #all == 0 then
-            if btn then btn.Text = string.format("FARMER: ON (0) - TOTAL 0") end
-            print("Nenhum Jack o' Lantern vivo na Enemies")
-            task.wait(2)
+            task.wait(0.5)
         else
-            local island = getNearestIsland(all)
-            if btn then btn.Text = string.format("ILHA: %d/%d Jack", #island, #all) end
-            print("Ilha atual:", #island)
-            for _, p in ipairs(island) do
+            local island = getIslandTargets(all)
+            for _, target in ipairs(island) do
                 if not Farming then break end
-                pcall(attackUntilBreak, p)
-                task.wait(0.1)
+                if target.Model and target.Model.Parent and target.Humanoid.Health > 0 then
+                    attack(target)
+                end
             end
+            task.wait(0.2)
         end
-        task.wait(0.4)
     end
 end
 
--- UI
-local gui = Instance.new("ScreenGui") gui.ResetOnSpawn=false gui.Parent=player:WaitForChild("PlayerGui")
-local btn = Instance.new("TextButton") btn.Size=UDim2.new(0,220,0,60) btn.Position=UDim2.new(0.5,-110,0,60) btn.Text="FARMER: OFF" btn.BackgroundColor3=Color3.fromRGB(255,128,0) btn.TextColor3=Color3.new(1,1,1) btn.TextScaled=true btn.Parent=gui
-getgenv().PumpBtn = btn
-
-local function toggle()
-    Farming = not Farming
-    btn.Text = Farming and "FARMER: ON" or "FARMER: OFF"
-    btn.BackgroundColor3 = Farming and Color3.fromRGB(0,255,0) or Color3.fromRGB(255,128,0)
-    if Farming then equipWeapon() task.spawn(mainLoop) end
-end
-btn.MouseButton1Click:Connect(toggle)
-UIS.InputBegan:Connect(function(i,g) if not g and i.KeyCode==Enum.KeyCode.E then toggle() end end)
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Config.ToggleKey then
+        Farming = not Farming
+        print("[Pumpkin Farm V9] Farming:", Farming)
+        if Farming then task.spawn(main) end
+    end
+end)
 
 RunService.Stepped:Connect(function()
     if Farming then
         local hrp = getHRP()
         if hrp then
-            for _,p in ipairs(player.Character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
             hrp.CanCollide = false
+            for _, p in ipairs(player.Character:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
         end
     end
 end)
 
-print("[V8] Jack o' Lantern - Liga com E, com arma no 1!")
+print("[Pumpkin Farm V9] Corrido! Aperte E com a arma equipada.")
